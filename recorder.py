@@ -155,7 +155,7 @@ class Recorder:
                   'started_at':datetime.now(timezone.utc).isoformat(),'status':'準備中','interval_seconds':interval,
                   'scope':'All observed ground damage calls on this process; no country or division filter',
                   'counts':'Cumulative since attach; do not sum checkpoint rows','format_version':3,
-                  'width_range_filter':width_range,'detail_limit_per_side':250}
+                  'width_range_filter':width_range,'detail_limit_per_side':250,'detail_sample_interval_ms':1000,'detail_sample_per_side':25}
             save_report(self.folder,counts,meta)
             if details:
                 from detail_report import save_details
@@ -318,7 +318,7 @@ def gui(smoke_test=False):
     ttk.Label(frame,textvariable=stats,font=('',15),justify='left').pack(anchor='w',pady=14)
     detail_enabled=tk.BooleanVar(value=True)
     detail_status=tk.StringVar(value='個別記録：a 0 / 250件・b 0 / 250件')
-    detail_check=ttk.Checkbutton(frame,text='個別攻撃も記録（攻撃側250件＋防御側250件）',variable=detail_enabled)
+    detail_check=ttk.Checkbutton(frame,text='個別攻撃も記録（1秒に各側25件・合計500件まで）',variable=detail_enabled)
     detail_check.pack(anchor='w')
     width_range_enabled=tk.BooleanVar(value=False)
     width_range_check=ttk.Checkbutton(frame,text='両陣営に30.00～50.00幅の師団がいる戦闘も別集計',variable=width_range_enabled)
@@ -389,7 +389,7 @@ if __name__=='__main__':
     parser.add_argument('--pid',type=int)
     parser.add_argument('--check',type=Path)
     parser.add_argument('--ui-check',action='store_true')
-    parser.add_argument('--details',action='store_true',help='CLI: record first 250 source-target calls per side')
+    parser.add_argument('--details',action='store_true',help='CLI: sample up to 25 calls per side per second, 250 per side total')
     parser.add_argument('--width-range',action='store_true',help='Compare all battles with battles having 30-50 width active divisions on BOTH sides')
     args=parser.parse_args()
     if args.check:

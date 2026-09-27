@@ -11,6 +11,20 @@ typedef struct { int enabled,list_offset,count_offset,pad; WidthGetter width; } 
 extern Filter width_filter;
 typedef struct { uint64_t enabled, sequence, reserved[2]; int64_t records[500][40]; } Trace;
 extern Trace trace;
+extern uint64_t tick_ms(void);
+typedef struct { uint64_t start; unsigned int started, used[2]; } Sampling;
+extern Sampling sampling;
+/* Called under the state lock. Unused quotas never accumulate. */
+static int sample_slot(unsigned int side) {
+  uint64_t now=tick_ms();
+  if(!sampling.started || now-sampling.start>=1000) {
+    sampling.started=1; sampling.start=now;
+    sampling.used[0]=sampling.used[1]=0;
+  }
+  if(sampling.used[side]>=25) return 0;
+  sampling.used[side]++;
+  return 1;
+}
 typedef struct { int role; int64_t *record; int64_t *current; int selected; } Ground;
 typedef struct {
   void *lock;
@@ -109,7 +123,7 @@ void ground_enter(GumInvocationContext *ctx) {
     state.active++;
     if(trace.enabled && flag<=1) {
       uint64_t sequence=++trace.sequence;
-      if(selected && trace.reserved[flag]<250) {
+      if(selected && trace.reserved[flag]<250 && sample_slot(flag)) {
         uint64_t n=trace.reserved[flag]++;
         int64_t *r=trace.records[flag*250+n];
         r[1]=sequence; r[2]=n+1; r[3]=flag;

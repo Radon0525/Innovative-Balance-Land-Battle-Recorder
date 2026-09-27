@@ -76,6 +76,18 @@ class DetailTests(unittest.TestCase):
             script=session.create_script(source({'test':True,'defense_offset':0}))
             script.load()
             data=script.exports_sync.exercisedetails(1200)
+            self.assertEqual(data['reserved'],['25','25'])
+            self.assertEqual(len(script.exports_sync.exercisedetails(100)['records']),50)
+            script.exports_sync.advancetime(999)
+            self.assertEqual(len(script.exports_sync.exercisedetails(100)['records']),50)
+            script.exports_sync.advancetime(1)
+            for batch in range(1,10):
+                data=script.exports_sync.exercisedetails(1200)
+                self.assertEqual(len(data['records']),(batch+1)*50)
+                script.exports_sync.advancetime(1000)
+            self.assertEqual(len(script.exports_sync.exercisedetails(100)['records']),500)
+            # Sampling must never drop cumulative counts, including skipped calls.
+            self.assertEqual(list(map(int,script.exports_sync.snapshot()))[:4],[12300]*4)
             self.assertEqual(data['reserved'],['250','250'])
             records=[list(map(int,r)) for r in data['records']]
             self.assertEqual(len(records),500)

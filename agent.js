@@ -7,11 +7,15 @@ const traceBuffer = Memory.alloc(160032);
 state.add(80).writeS32(CONFIG.defense_offset);
 state.add(84).writeS32(CONFIG.test ? 0 : CONFIG.side_offset);
 const kernel = Process.getModuleByName('kernel32.dll');
+const sampling = Memory.alloc(24);
+const testClock = Memory.alloc(8);
+const clockFixture = CONFIG.test ? new CModule('extern unsigned long long clock_value; unsigned long long now(void) { return clock_value; }',{clock_value:testClock}) : null;
 const cm = new CModule(COUNTER_SOURCE, {
-  state, trace, width_filter,
+  state, trace, width_filter, sampling,
   acquire: kernel.getExportByName('AcquireSRWLockExclusive'),
   release: kernel.getExportByName('ReleaseSRWLockExclusive'),
-  thread_id: kernel.getExportByName('GetCurrentThreadId')
+  thread_id: kernel.getExportByName('GetCurrentThreadId'),
+  tick_ms: CONFIG.test ? clockFixture.now : kernel.getExportByName('GetTickCount64')
 });
 const buf = Memory.alloc(280);
 const takeSnapshot = new NativeFunction(cm.snapshot, 'void', ['pointer']);
@@ -22,6 +26,7 @@ let fixture = null;
 const fixtureOffset=Memory.alloc(4);
 let runFixture = null;
 let filterFixtureInstalled = false;
+let detailFixtureInstalled = false;
 
 function install(hit, ground) {
   listeners.push(Interceptor.attach(ground, {onEnter:cm.ground_enter, onLeave:cm.ground_leave}));
@@ -103,6 +108,10 @@ if (CONFIG.test) {
   }
 }
 rpc.exports = {
+  advancetime(ms) {
+    if(!CONFIG.test || ms<0) throw new Error('test only, monotonic clock');
+    testClock.writeU64(testClock.readU64().add(ms));
+  },
   widthcase(value, otherValue, placement='both') {
     if(!CONFIG.test) throw new Error('test only');
     if(!filterFixtureInstalled) {
@@ -139,11 +148,14 @@ rpc.exports = {
   },
   exercisedetails(n) {
     if(!CONFIG.test) throw new Error('test only');
+    if(!detailFixtureInstalled) {
     listeners.push(Interceptor.attach(fixture.detail_ground,{onEnter:cm.ground_enter,onLeave:cm.ground_leave}));
     listeners.push(Interceptor.attach(fixture.detail_dice,{onEnter:cm.dice_enter}));
     listeners.push(Interceptor.attach(fixture.detail_round,{onEnter:cm.rounding_enter}));
     listeners.push(Interceptor.attach(fixture.detail_hit,{onEnter:cm.hit_enter,onLeave:cm.hit_leave}));
     Interceptor.flush(); trace.writeU64(1);
+    detailFixtureInstalled=true;
+    }
     const src=Memory.alloc(0x300), target=Memory.alloc(0x300);
     const ss=Memory.alloc(0x300), ts=Memory.alloc(0x300), side=Memory.alloc(8);
     src.add(0x138).writePointer(ss);target.add(0x138).writePointer(ts);
@@ -167,7 +179,7 @@ rpc.exports = {
       for(const listener of detailListeners) listener.detach();
       detailListeners=[]; Interceptor.flush();
     }
-    return {records,limit_per_side:250,reserved:[traceBuffer.add(16).readU64().toString(),traceBuffer.add(24).readU64().toString()]};
+    return {records,limit_per_side:250,sample_interval_ms:1000,sample_per_side:25,reserved:[traceBuffer.add(16).readU64().toString(),traceBuffer.add(24).readU64().toString()]};
   },
   snapshot() {
     takeSnapshot(buf);

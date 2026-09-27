@@ -9,7 +9,10 @@ NOTICE=('記録範囲全体のまとめです。ゲーム内の時間境界を�
 
 def detail_scope(data):
     from recorder import filter_label
-    return '両陣営に30.00～50.00幅がいる戦闘の個別記録' if data.get('width_range_filter') else filter_label(data)
+    scope='両陣営に30.00～50.00幅がいる戦闘の個別記録' if data.get('width_range_filter') else filter_label(data)
+    if data.get('sample_interval_ms'):
+        scope+='（実時間1秒に各側最大25件を抽出・無作為抽出ではありません）'
+    return scope
 
 def groups(data):
     records=sorted((list(map(int,r)) for r in data['records']),key=lambda r:r[1])
