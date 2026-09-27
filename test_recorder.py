@@ -10,6 +10,18 @@ import frida
 from recorder import source, metrics, save_report, profile_for, Recorder, latest_report, role_metrics
 
 class RecorderTests(unittest.TestCase):
+    def test_both_statistics_are_saved_separately(self):
+        all_counts=[10,2,6,2,1,0,0,0,0]+[3]*8
+        filtered=[3,1,1,1,0,0,0,0,0]+[1]*8
+        with tempfile.TemporaryDirectory() as folder:
+            save_report(Path(folder),all_counts+filtered,{'version':'test','status':'停止済み','started_at':'test','width_range_filter':True})
+            saved=json.loads((Path(folder)/'summary.json').read_text(encoding='utf-8'))
+            self.assertEqual(saved['counts'],all_counts)
+            self.assertEqual(saved['ground']['attacks'],20)
+            self.assertEqual(saved['filtered']['counts'],filtered)
+            self.assertEqual(saved['filtered']['ground']['attacks'],6)
+            self.assertIn('全戦闘と幅条件の比較',(Path(folder)/'report.html').read_text(encoding='utf-8'))
+
     def test_previous_session_report_is_found(self):
         import os
         with tempfile.TemporaryDirectory() as folder, patch('recorder.BASE',Path(folder)):

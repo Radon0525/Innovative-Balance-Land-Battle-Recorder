@@ -61,8 +61,9 @@ def save_details(folder,data):
     from group_report import render_groups_html
     folder=Path(folder)
     records=ordered(data)
+    limit=data.get('limit_per_side',500)
     counts={side:sum(int(r[3])==flag for r in records) for side,flag in [('a',1),('b',0)]}
-    data=dict(data,format_version=1,completed=counts,limit_per_side=500)
+    data=dict(data,format_version=1,completed=counts,limit_per_side=data.get('limit_per_side',500))
     atomic_text(folder/'details.json',json.dumps(data,ensure_ascii=False,indent=2)+'\n')
     stream=io.StringIO(newline='');writer=csv.writer(stream,lineterminator='\n');writer.writerow(HEADERS)
     writer.writerows(row_values(r) for r in records)
@@ -72,7 +73,7 @@ def save_details(folder,data):
     grouped_html=render_groups_html(data)
     atomic_text(folder/'details.html','''<!doctype html><meta charset="utf-8"><title>個別攻撃の記録</title>
 <style>body{font:15px system-ui;margin:24px;background:#f3f6fa;color:#17263c}h1{font-size:24px}p{line-height:1.7}.sheet{overflow:auto;max-height:65vh;background:white;border:1px solid #b8c6d8}table{border-collapse:separate;border-spacing:0;white-space:nowrap;font-variant-numeric:tabular-nums}th,td{padding:9px 12px;border-right:1px solid #d6dfeb;border-bottom:1px solid #d6dfeb;text-align:right}th{position:sticky;top:0;background:#213e60;color:white;z-index:2}td:first-child{position:sticky;left:0;background:#e6edf6;font-weight:bold}.a{background:#edf6ff}.b{background:#fff6e8}pre{white-space:pre-wrap;line-height:1.7}details{background:white;padding:12px;margin:8px 0}</style>
-<h1>個別攻撃の記録：各側500件</h1>'''+f'<p>保存済み：a（攻撃側）{counts["a"]} / 500件、b（防御側）{counts["b"]} / 500件。</p>'+grouped_html+'<h2>個別処理の表</h2>'+'''
+<h1>個別攻撃の記録</h1>'''+f'<p>保存済み：a（攻撃側）{counts["a"]} / {limit}件、b（防御側）{counts["b"]} / {limit}件。</p>'+grouped_html+'<h2>個別処理の表</h2>'+'''
 <p>1行＝1師団から1対象への攻撃処理。1行の中で複数回の命中判定が行われます。<br>
 1aと1bはそれぞれの側の1件目で、同じ戦闘・時刻・師団同士の応酬を意味しません。実際の順番は「発生順」で確認できます。<br>
 攻撃値はSA（対人）とHA（対戦車）を分けて表示。配分率と装甲化率は1＝100%。空欄の代わりに未観測を表示します。</p>
@@ -88,8 +89,8 @@ def show_details(root,folder,subset=None):
         messagebox.showinfo('個別攻撃の記録',f'個別記録はまだ保存されていません。\n{exc}',parent=root);return
     records=ordered(data)
     if subset is not None:records=[r for r in records if int(r[1]) in subset]
-    w=tk.Toplevel(root);w.title('個別攻撃：1a・1b ～ 500a・500b');w.geometry('1250x720')
-    ttk.Label(w,text=f'表示中 {len(records)}件'+('（選択した対象の処理）' if subset is not None else ' / 最大1000件')+'。a・bは各側の発生順です。同じ番号でも同じ戦闘とは限りません。\n行を選ぶと計算の説明を表示します。横スクロールで内訳を確認できます。',padding=12).pack(anchor='w')
+    w=tk.Toplevel(root);w.title('個別攻撃の記録');w.geometry('1250x720')
+    ttk.Label(w,text=f'表示中 {len(records)}件'+('（選択した対象の処理）' if subset is not None else f" / 最大{data.get('limit_per_side',500)*2}件")+'。a・bは各側の発生順です。同じ番号でも同じ戦闘とは限りません。\n行を選ぶと計算の説明を表示します。横スクロールで内訳を確認できます。',padding=12).pack(anchor='w')
     from group_report import show_groups
     ttk.Button(w,text='攻撃先ごとのまとめ',command=lambda:show_groups(root,folder)).pack(anchor='w',padx=12,pady=(0,8))
     frame=ttk.Frame(w);frame.pack(fill='both',expand=True)

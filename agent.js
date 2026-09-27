@@ -1,9 +1,9 @@
 // CONFIG and COUNTER_SOURCE are prepended by the host.
 const state = Memory.alloc(16384);
 const width_filter = Memory.alloc(24);
-const trace = Memory.alloc(320032);
+const trace = Memory.alloc(160032);
 trace.writeU64(0);
-const traceBuffer = Memory.alloc(320032);
+const traceBuffer = Memory.alloc(160032);
 state.add(80).writeS32(CONFIG.defense_offset);
 state.add(84).writeS32(CONFIG.test ? 0 : CONFIG.side_offset);
 const kernel = Process.getModuleByName('kernel32.dll');
@@ -13,7 +13,7 @@ const cm = new CModule(COUNTER_SOURCE, {
   release: kernel.getExportByName('ReleaseSRWLockExclusive'),
   thread_id: kernel.getExportByName('GetCurrentThreadId')
 });
-const buf = Memory.alloc(144);
+const buf = Memory.alloc(280);
 const takeSnapshot = new NativeFunction(cm.snapshot, 'void', ['pointer']);
 const takeTrace = new NativeFunction(cm.trace_snapshot, 'void', ['pointer']);
 let listeners = [];
@@ -86,7 +86,7 @@ if (CONFIG.test) {
   const hit = verified('hit'), ground = verified('ground');
   const dice = verified('dice');
   const rounding = CONFIG.details ? verified('rounding') : null;
-  if(CONFIG.width40) {
+  if(CONFIG.width_range) {
     const width=verified('width'), allocation=verified('allocation');
     width_filter.add(4).writeS32(CONFIG.active_list_offset);
     width_filter.add(8).writeS32(CONFIG.active_count_offset);
@@ -103,7 +103,7 @@ if (CONFIG.test) {
   }
 }
 rpc.exports = {
-  widthcase(value, placement) {
+  widthcase(value, otherValue, placement='both') {
     if(!CONFIG.test) throw new Error('test only');
     if(!filterFixtureInstalled) {
       listeners.push(Interceptor.attach(fixture.detail_allocation,{onEnter:cm.allocation_enter,onLeave:cm.allocation_leave}));
@@ -122,14 +122,14 @@ rpc.exports = {
       u.writePointer(vt);u.add(0x138).writePointer(s);u.add(0x280).writeS64(width);
       keep.push(u,s);return u;
     }
-    const src=unit(2000000),dst=unit(2000000),extra=unit(value);
-    function side(flag,first,extraActive) {
+    const src=unit(2000000),dst=unit(2000000),extra=unit(value),otherExtra=unit(otherValue);
+    function side(flag,first,additional,extraActive) {
       const p=Memory.alloc(32),list=Memory.alloc(16);
-      p.writeU8(flag);list.writePointer(first);list.add(8).writePointer(extra);
+      p.writeU8(flag);list.writePointer(first);list.add(8).writePointer(additional);
       p.add(8).writePointer(list);p.add(16).writeS32(extraActive ? 2 : 1);
       keep.push(p,list);return p;
     }
-    const a=side(1,src,placement==='left'),b=side(0,dst,placement==='right');
+    const a=side(1,src,extra,placement==='left'||placement==='both'),b=side(0,dst,otherExtra,placement==='right'||placement==='both');
     const call=new NativeFunction(fixture.detail_allocation,'void',['pointer','pointer','pointer','pointer']);
     // Fixture defense-use counter must not overlap the vtable pointer.
     state.add(80).writeS32(0x254);
@@ -158,20 +158,21 @@ rpc.exports = {
   details() {
     takeTrace(traceBuffer);
     const records=[];
-    for(let i=0;i<1000;i++) {
+    for(let i=0;i<500;i++) {
       const p=traceBuffer.add(32+i*320);
       if(p.readU64().toString()==='1')
         records.push(Array.from({length:40},(_,j)=>p.add(j*8).readS64().toString()));
     }
-    if(records.length===1000) {
+    if(records.length===500) {
       for(const listener of detailListeners) listener.detach();
       detailListeners=[]; Interceptor.flush();
     }
-    return {records,reserved:[traceBuffer.add(16).readU64().toString(),traceBuffer.add(24).readU64().toString()]};
+    return {records,limit_per_side:250,reserved:[traceBuffer.add(16).readU64().toString(),traceBuffer.add(24).readU64().toString()]};
   },
   snapshot() {
     takeSnapshot(buf);
-    return Array.from({length:17},(_,i)=>buf.add(i*8).readU64().toString());
+    const counts=Array.from({length:17},(_,i)=>buf.add(i*8).readU64().toString());
+    return width_filter.readS32() ? counts.concat(Array.from({length:17},(_,i)=>buf.add((18+i)*8).readU64().toString())) : counts;
   },
   exercise(n) {
     if(!CONFIG.test) throw new Error('test only');
