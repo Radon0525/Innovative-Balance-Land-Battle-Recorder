@@ -1,5 +1,6 @@
 // CONFIG and COUNTER_SOURCE are prepended by the host.
-const state = Memory.alloc(8192);
+const state = Memory.alloc(16384);
+const width_filter = Memory.alloc(24);
 const trace = Memory.alloc(320032);
 trace.writeU64(0);
 const traceBuffer = Memory.alloc(320032);
@@ -7,7 +8,7 @@ state.add(80).writeS32(CONFIG.defense_offset);
 state.add(84).writeS32(CONFIG.test ? 0 : CONFIG.side_offset);
 const kernel = Process.getModuleByName('kernel32.dll');
 const cm = new CModule(COUNTER_SOURCE, {
-  state, trace,
+  state, trace, width_filter,
   acquire: kernel.getExportByName('AcquireSRWLockExclusive'),
   release: kernel.getExportByName('ReleaseSRWLockExclusive'),
   thread_id: kernel.getExportByName('GetCurrentThreadId')
@@ -18,7 +19,9 @@ const takeTrace = new NativeFunction(cm.trace_snapshot, 'void', ['pointer']);
 let listeners = [];
 let detailListeners = [];
 let fixture = null;
+const fixtureOffset=Memory.alloc(4);
 let runFixture = null;
+let filterFixtureInstalled = false;
 
 function install(hit, ground) {
   listeners.push(Interceptor.attach(ground, {onEnter:cm.ground_enter, onLeave:cm.ground_leave}));
@@ -27,6 +30,7 @@ function install(hit, ground) {
 }
 if (CONFIG.test) {
   fixture = new CModule(`
+    extern int fixture_offset;
     typedef int (*Hit)(void *,int,int);
     typedef void (*Ground)(void *,Hit,void *);
     int fake_hit(void *p,int defended,int hit) {
@@ -48,7 +52,7 @@ if (CONFIG.test) {
     }
     void detail_round(long long value) { volatile long long v=value; v++; }
     int detail_hit(void *p,long long threshold,int flags) {
-      if(flags&1) (*(int *)p)++;
+      if(flags&1) (*(int *)((char *)p+fixture_offset))++;
       return flags>>1;
     }
     void detail_dice(void *side,int count,void *target,long long factor) {
@@ -59,7 +63,14 @@ if (CONFIG.test) {
       detail_round(450000);
       detail_dice(side,4,target,100000);
     }
-  `);
+    long long *fake_width(void *unit,long long *out,void *unused) {
+      *out=*(long long *)((char *)unit+0x280);return out;
+    }
+    void detail_allocation(void *side,void *enemy,void *src,void *target) {
+      detail_ground(side,enemy,src,target,50000);
+      detail_ground(enemy,side,target,src,50000);
+    }
+  `,{fixture_offset:fixtureOffset});
   install(fixture.fake_hit, fixture.fake_ground);
   runFixture = new NativeFunction(fixture.run,'void',['pointer','pointer','pointer','int']);
 } else {
@@ -75,6 +86,14 @@ if (CONFIG.test) {
   const hit = verified('hit'), ground = verified('ground');
   const dice = verified('dice');
   const rounding = CONFIG.details ? verified('rounding') : null;
+  if(CONFIG.width40) {
+    const width=verified('width'), allocation=verified('allocation');
+    width_filter.add(4).writeS32(CONFIG.active_list_offset);
+    width_filter.add(8).writeS32(CONFIG.active_count_offset);
+    width_filter.add(16).writePointer(width);
+    listeners.push(Interceptor.attach(allocation,{onEnter:cm.allocation_enter,onLeave:cm.allocation_leave}));
+    width_filter.writeS32(1);
+  }
   install(hit,ground);
   if(CONFIG.details) {
     detailListeners.push(Interceptor.attach(dice,{onEnter:cm.dice_enter}));
@@ -84,6 +103,40 @@ if (CONFIG.test) {
   }
 }
 rpc.exports = {
+  widthcase(value, placement) {
+    if(!CONFIG.test) throw new Error('test only');
+    if(!filterFixtureInstalled) {
+      listeners.push(Interceptor.attach(fixture.detail_allocation,{onEnter:cm.allocation_enter,onLeave:cm.allocation_leave}));
+      listeners.push(Interceptor.attach(fixture.detail_ground,{onEnter:cm.ground_enter,onLeave:cm.ground_leave}));
+      listeners.push(Interceptor.attach(fixture.detail_hit,{onEnter:cm.hit_enter,onLeave:cm.hit_leave}));
+      listeners.push(Interceptor.attach(fixture.detail_dice,{onEnter:cm.dice_enter}));
+      listeners.push(Interceptor.attach(fixture.detail_round,{onEnter:cm.rounding_enter}));
+      width_filter.add(4).writeS32(8);width_filter.add(8).writeS32(16);
+      width_filter.add(16).writePointer(fixture.fake_width);width_filter.writeS32(1);
+      trace.writeU64(1);Interceptor.flush();filterFixtureInstalled=true;
+    }
+    const vt=Memory.alloc(0x180);vt.add(0x170).writePointer(fixture.fake_width);
+    const keep=[vt];
+    function unit(width) {
+      const u=Memory.alloc(0x300),s=Memory.alloc(0x300);
+      u.writePointer(vt);u.add(0x138).writePointer(s);u.add(0x280).writeS64(width);
+      keep.push(u,s);return u;
+    }
+    const src=unit(2000000),dst=unit(2000000),extra=unit(value);
+    function side(flag,first,extraActive) {
+      const p=Memory.alloc(32),list=Memory.alloc(16);
+      p.writeU8(flag);list.writePointer(first);list.add(8).writePointer(extra);
+      p.add(8).writePointer(list);p.add(16).writeS32(extraActive ? 2 : 1);
+      keep.push(p,list);return p;
+    }
+    const a=side(1,src,placement==='left'),b=side(0,dst,placement==='right');
+    const call=new NativeFunction(fixture.detail_allocation,'void',['pointer','pointer','pointer','pointer']);
+    // Fixture defense-use counter must not overlap the vtable pointer.
+    state.add(80).writeS32(0x254);
+    fixtureOffset.writeS32(0x254);
+    call(a,b,src,dst);
+    return {counts:this.snapshot(),details:this.details()};
+  },
   exercisedetails(n) {
     if(!CONFIG.test) throw new Error('test only');
     listeners.push(Interceptor.attach(fixture.detail_ground,{onEnter:cm.ground_enter,onLeave:cm.ground_leave}));

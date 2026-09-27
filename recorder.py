@@ -78,6 +78,9 @@ def atomic_text(path, text):
     tmp.write_text(text,encoding='utf-8')
     tmp.replace(path)
 
+def filter_label(meta):
+    return '40幅の師団が交戦中の戦闘のみ' if meta.get('width40_filter') else '幅による絞り込みなし'
+
 def save_report(folder, counts, meta):
     roles=role_metrics(counts)
     summary = dict(meta, counts=counts, ground=metrics(counts[:4]), other=metrics(counts[4:8]), measurement_errors=counts[8],roles=roles)
@@ -95,7 +98,7 @@ def save_report(folder, counts, meta):
     atomic_text(folder/'report.html',f'''<!doctype html><html lang="ja"><meta charset="utf-8">
 <title>HOI4 戦闘計測</title><style>body{{background:#101827;color:#e2e8f0;font:17px system-ui;margin:40px auto;max-width:850px;padding:24px}}h1{{color:#7dd3fc}}table{{border-collapse:collapse;width:100%}}td{{padding:12px;border-bottom:1px solid #334155}}.cards{{display:flex;gap:24px;flex-wrap:wrap}}.card{{background:#1e293b;padding:22px;border-radius:12px}}b{{font-size:30px;display:block}}small,p{{line-height:1.8}}</style>
 <h1>HOI4 戦闘計測</h1><p>{html.escape(meta['version'])} ／ 状態：{html.escape(meta['status'])}<br>
-開始：{html.escape(meta['started_at'])} ／ 最終保存：{html.escape(meta.get('updated_at',''))}</p>
+開始：{html.escape(meta['started_at'])} ／ 最終保存：{html.escape(meta.get('updated_at',''))}<br>記録対象：{filter_label(meta)}</p>
 {role_html}
 {'<p><a href="details.html">個別1000件の表と計算を見る</a></p>' if (folder/'details.json').exists() else ''}
 <h2>全体の合算</h2><div class="cards"><div class="card">地上攻撃判定<b>{m['attacks']:,}</b></div><div class="card">防御・突破の適用率<b>{percent(m['defense_coverage'])}</b></div></div>
@@ -114,7 +117,7 @@ class Recorder:
         self.stop_event=threading.Event()
         self.folder=None
 
-    def run(self, pid=None, interval=5, details=False):
+    def run(self, pid=None, interval=5, details=False, width40=False):
         import frida
         session=script=None
         counts=[0]*17
@@ -130,17 +133,18 @@ class Recorder:
             pid=candidates[0].pid
             exe=process_path(pid)
             profile=profile_for(exe)
-            profile=dict(profile,details=details)
+            profile=dict(profile,details=details,width40=width40)
             self.folder=BASE/'recordings'/(datetime.now().strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:6])
             self.folder.mkdir(parents=True)
             meta={'version':profile['version'],'exe':str(exe),'sha256':profile['sha256'],'pid':pid,
                   'started_at':datetime.now(timezone.utc).isoformat(),'status':'準備中','interval_seconds':interval,
                   'scope':'All observed ground damage calls on this process; no country or division filter',
-                  'counts':'Cumulative since attach; do not sum checkpoint rows','format_version':2}
+                  'counts':'Cumulative since attach; do not sum checkpoint rows','format_version':2,
+                  'width40_filter':width40}
             save_report(self.folder,counts,meta)
             if details:
                 from detail_report import save_details
-                save_details(self.folder,{'records':[],'reserved':[0,0]})
+                save_details(self.folder,{'records':[],'reserved':[0,0],'width40_filter':width40})
             session=device.attach(pid)
             session.on('detached',lambda *args: detached.set())
             script=session.create_script(source(profile))
@@ -167,7 +171,7 @@ class Recorder:
                     os.fsync(f.fileno())
                     save_report(self.folder,counts,meta)
                     if details:
-                        progress=save_details(self.folder,script.exports_sync.details())
+                        progress=save_details(self.folder,dict(script.exports_sync.details(),width40_filter=width40))
                         self.notify({'detail_progress':progress})
                     self.notify({'counts':counts,'folder':str(self.folder)})
                 checkpoint()
@@ -217,7 +221,7 @@ def show_report_window(root,folder):
     window=tk.Toplevel(root);window.title('陸戦の収集結果');window.geometry('760x770')
     frame=ttk.Frame(window,padding=20);frame.pack(fill='both',expand=True)
     ttk.Label(frame,text='陸戦の収集結果',font=('',18,'bold')).pack(anchor='w')
-    ttk.Label(frame,text=f"{data.get('version','')} ／ {data.get('status','')}\n最終保存：{data.get('updated_at','')}",wraplength=630).pack(anchor='w',pady=10)
+    ttk.Label(frame,text=f"{data.get('version','')} ／ {data.get('status','')}\n最終保存：{data.get('updated_at','')} ／ {filter_label(data)}",wraplength=630).pack(anchor='w',pady=10)
     table=ttk.Treeview(frame,columns=('value',),show='tree',height=18)
     table.column('#0',width=400);table.column('value',width=180,anchor='e')
     rows=[('地上攻撃の判定数',f"{ground['attacks']:,} 回"),
@@ -284,6 +288,9 @@ def gui(smoke_test=False):
     detail_status=tk.StringVar(value='個別記録：a 0 / 500件・b 0 / 500件')
     detail_check=ttk.Checkbutton(frame,text='個別攻撃も記録（攻撃側500件＋防御側500件）',variable=detail_enabled)
     detail_check.pack(anchor='w')
+    width40_enabled=tk.BooleanVar(value=False)
+    width40_check=ttk.Checkbutton(frame,text='40幅の師団が交戦中の戦闘のみ記録',variable=width40_enabled)
+    width40_check.pack(anchor='w')
     ttk.Label(frame,textvariable=detail_status).pack(anchor='w',pady=4)
     ttk.Label(frame,text='地上攻撃を全体集計。国別・師団別の分類は未実装です。\nゲームの能力値・乱数・命中結果は変更しません。\nまずシングルで確認してください。マルチの負荷・同期は未検証です。',wraplength=640).pack(anchor='w',pady=8)
     events=queue.Queue(); active=[None]; last_folder=[latest_report()]; closing=[False]
@@ -292,9 +299,10 @@ def gui(smoke_test=False):
         active[0]=Recorder(events.put)
         start_button.config(state='disabled'); stop_button.config(state='normal')
         detail_check.config(state='disabled')
+        width40_check.config(state='disabled')
         detail_status.set('個別記録：準備中' if detail_enabled.get() else '個別記録：無効')
         status.set('対応確認・接続中…')
-        threading.Thread(target=active[0].run,kwargs={'details':detail_enabled.get()},daemon=False).start()
+        threading.Thread(target=active[0].run,kwargs={'details':detail_enabled.get(),'width40':width40_enabled.get()},daemon=False).start()
     def stop():
         if active[0]: active[0].stop_event.set(); status.set('保存して停止中…')
     def show_result():
@@ -322,6 +330,7 @@ def gui(smoke_test=False):
             if event.get('done'):
                 active[0]=None; start_button.config(state='normal'); stop_button.config(state='disabled')
                 detail_check.config(state='normal')
+                width40_check.config(state='normal')
                 if event.get('error'): messagebox.showerror('収集を開始／継続できません',event['error'])
                 if closing[0]: root.destroy(); return
         root.after(200,poll)
@@ -345,6 +354,7 @@ if __name__=='__main__':
     parser.add_argument('--check',type=Path)
     parser.add_argument('--ui-check',action='store_true')
     parser.add_argument('--details',action='store_true',help='CLI: record first 500 source-target calls per side')
+    parser.add_argument('--width40',action='store_true',help='Only battles with an active division of effective combat width 40')
     args=parser.parse_args()
     if args.check:
         print(json.dumps(profile_for(args.check),indent=2))
@@ -352,6 +362,6 @@ if __name__=='__main__':
         import signal
         recorder=Recorder(lambda event:print(json.dumps(event,ensure_ascii=False),flush=True))
         signal.signal(signal.SIGINT,lambda *a:recorder.stop_event.set())
-        recorder.run(args.pid,details=args.details)
+        recorder.run(args.pid,details=args.details,width40=args.width40)
     else:
         gui(smoke_test=args.ui_check)

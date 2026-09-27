@@ -75,7 +75,8 @@ def describe(group,names,records=None):
 
 def render_groups_html(data):
     grouped,names=groups(data)
-    parts=['<h2>攻撃先ごとのまとめ</h2><p>'+html.escape(NOTICE)+'</p>',
+    from recorder import filter_label
+    parts=['<h2>攻撃先ごとのまとめ</h2><p>記録対象：'+filter_label(data)+'</p><p>'+html.escape(NOTICE)+'</p>',
            '<p>師団1・師団2…はこの表だけの仮名です。項目を開くと攻撃元別の内訳を読めます。</p>']
     for g in grouped:
         role,_,target=g['key'];n,actual,hits,uncovered,rate=totals(g['records'])
@@ -93,9 +94,10 @@ def show_groups(root,folder):
     except (OSError,ValueError) as exc:
         messagebox.showinfo('攻撃先ごとのまとめ',f'個別記録を読み込めません。\n{exc}',parent=root);return
     grouped,names=groups(data)
+    from recorder import filter_label
     w=tk.Toplevel(root);w.title('攻撃先ごとのまとめ');w.geometry('1180x750')
     ttk.Label(w,text='どの師団へ攻撃が集まったか',font=('',18,'bold'),padding=12).pack(anchor='w')
-    ttk.Label(w,text=NOTICE,wraplength=1100,padding=(12,0,12,12)).pack(anchor='w')
+    ttk.Label(w,text=filter_label(data)+'。'+NOTICE,wraplength=1100,padding=(12,0,12,12)).pack(anchor='w')
     frame=ttk.Frame(w);frame.pack(fill='both',expand=True,padx=12)
     headings=['攻撃合計（補正後）','防御/突破（補正後）','処理数','判定数','命中','枠超過','枠の適用率','防御/突破（能力値）']
     tree=ttk.Treeview(frame,columns=list(range(len(headings))),show='tree headings',selectmode='browse')

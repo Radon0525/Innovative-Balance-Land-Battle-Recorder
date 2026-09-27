@@ -4,6 +4,8 @@
     "sha256": "870ebf1f615262facca48a3b947775c41f0a5338f3068c40958209f5c41c65ad",
     "defense_offset": 596,
     "side_offset": 184,
+    "active_list_offset": 200,
+    "active_count_offset": 212,
     "functions": {
       "hit": {
         "rva": 12494144,
@@ -20,6 +22,16 @@
         "prologue": "40535556574154415641574883ec204c8bbc2490000000498bd9498bf08bea48",
         "size": 268
       },
+      "width": {
+        "rva": 13034096,
+        "prologue": "4c89442418488954241048894c2408555356574154415541564157488d6c2498",
+        "size": 2574
+      },
+      "allocation": {
+        "rva": 19542560,
+        "prologue": "488954241048894c2408555356574154415541564157488d6c24b84881ec4801",
+        "size": 3144
+      },
       "rounding": {
         "rva": 19522813,
         "prologue": "498bc548f7e94c8bd249c1fa0e498bc2",
@@ -32,6 +44,8 @@
     "sha256": "7dc947be34970da1e1c787bcddbe7f62b610ff258aebf8f06aa8b348f3a031d5",
     "defense_offset": 596,
     "side_offset": 216,
+    "active_list_offset": 232,
+    "active_count_offset": 244,
     "functions": {
       "hit": {
         "rva": 12556912,
@@ -47,6 +61,16 @@
         "rva": 19635360,
         "prologue": "40535556574154415641574883ec204c8bbc2490000000498bd9498bf08bea48",
         "size": 268
+      },
+      "width": {
+        "rva": 13097392,
+        "prologue": "4c89442418488954241048894c2408555356574154415541564157488d6c2498",
+        "size": 2574
+      },
+      "allocation": {
+        "rva": 19628768,
+        "prologue": "488954241048894c2408555356574154415541564157488d6c24b84881ec4801",
+        "size": 3144
       },
       "rounding": {
         "rva": 19609021,

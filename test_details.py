@@ -9,6 +9,26 @@ from recorder import source
 from detail_report import row_values,save_details,explanation
 
 class DetailTests(unittest.TestCase):
+    def test_width_filter_keeps_whole_battle_and_reserves_no_excluded_slots(self):
+        child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)'])
+        session=None
+        try:
+            session=frida.attach(child.pid)
+            script=session.create_script(source({'test':True,'defense_offset':0}))
+            script.load()
+            for width,side,accepted in [(2000000,'left',0),(4000000,'left',1),
+                    (3999999,'left',1),(4000000,'right',2),(4000000,'reserve',2),(4100000,'left',2)]:
+                result=script.exports_sync.widthcase(width,side)
+                counts=list(map(int,result['counts']))
+                self.assertEqual(counts[:4],[accepted*2]*4)
+                self.assertEqual(counts[8],0)
+                self.assertEqual(len(result['details']['records']),accepted*2)
+                self.assertEqual(list(map(int,result['details']['reserved'])),[accepted,accepted])
+            script.exports_sync.stop();script.unload()
+        finally:
+            if session:session.detach()
+            child.terminate();child.wait(timeout=10)
+
     def test_table_can_open_and_select_a_row(self):
         import os
         from recorder import BASE
