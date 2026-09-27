@@ -1,0 +1,58 @@
+[
+  {
+    "version": "1.19.2.0.a729",
+    "sha256": "870ebf1f615262facca48a3b947775c41f0a5338f3068c40958209f5c41c65ad",
+    "defense_offset": 596,
+    "side_offset": 184,
+    "functions": {
+      "hit": {
+        "rva": 12494144,
+        "prologue": "48895c240848897c2410458b184c8bca418b5004488bd94169c3b385d64a48bf",
+        "size": 283
+      },
+      "ground": {
+        "rva": 19522112,
+        "prologue": "4c89442418488954241048894c24085355565741544155415641574883ec684d",
+        "size": 2034
+      },
+      "dice": {
+        "rva": 19549152,
+        "prologue": "40535556574154415641574883ec204c8bbc2490000000498bd9498bf08bea48",
+        "size": 268
+      },
+      "rounding": {
+        "rva": 19522813,
+        "prologue": "498bc548f7e94c8bd249c1fa0e498bc2",
+        "size": 16
+      }
+    }
+  },
+  {
+    "version": "1.19.3.0.c01a",
+    "sha256": "7dc947be34970da1e1c787bcddbe7f62b610ff258aebf8f06aa8b348f3a031d5",
+    "defense_offset": 596,
+    "side_offset": 216,
+    "functions": {
+      "hit": {
+        "rva": 12556912,
+        "prologue": "48895c240848897c2410458b184c8bca418b5004488bd94169c3b385d64a48bf",
+        "size": 283
+      },
+      "ground": {
+        "rva": 19608320,
+        "prologue": "4c89442418488954241048894c24085355565741544155415641574883ec684d",
+        "size": 2034
+      },
+      "dice": {
+        "rva": 19635360,
+        "prologue": "40535556574154415641574883ec204c8bbc2490000000498bd9498bf08bea48",
+        "size": 268
+      },
+      "rounding": {
+        "rva": 19609021,
+        "prologue": "498bc548f7e94c8bd249c1fa0e498bc2",
+        "size": 16
+      }
+    }
+  }
+]
