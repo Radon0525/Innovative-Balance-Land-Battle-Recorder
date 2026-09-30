@@ -1,3 +1,5 @@
+# DLは自己責任でお願いします！！
+
 # HOI4 Combat Recorder
 
 Hearts of Iron IVの陸戦で、攻撃判定と命中結果を収集するWindows用ツールです。
