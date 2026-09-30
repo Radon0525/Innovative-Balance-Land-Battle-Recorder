@@ -10,7 +10,7 @@ HEADERS=['番号','発生順','攻撃する側','攻撃側SA','攻撃側HA','攻
          '防御側SA','防御側HA','防御側防御','受け手の装甲化率','攻撃配分率',
          '端数処理前の判定数','予定判定数','実施判定数','防御/突破枠（端数処理前）',
          '使用済み・前','使用済み・後','適用・不命中','適用・命中','超過・不命中','超過・命中',
-         '確認','攻撃元ID','攻撃先ID','処理文脈ID']
+         '確認','攻撃元ID','攻撃先ID','処理文脈ID','攻撃側の国','防御側の国','射撃方向']
 
 def fixed(value):
     return format(Decimal(value)/100000,'f')
@@ -18,7 +18,7 @@ def fixed(value):
 def trunc(value,denom=100000):
     return (1 if value>=0 else -1)*(abs(value)//denom)
 
-def row_values(r):
+def row_values(r,tags=None):
     r=list(map(int,r))
     attacker,defender=(r[8:13],r[13:18]) if r[3]==1 else (r[13:18],r[8:13])
     actual=sum(r[23:27])
@@ -28,16 +28,20 @@ def row_values(r):
             *map(fixed,[attacker[0],attacker[1],attacker[4],defender[0],defender[1],defender[3],r[15],r[7]]),
             fixed(r[29]) if r[30] else '未観測',r[18] if r[28] else '未観測',actual,
             fixed(r[20]) if r[31] else '未観測',r[21],r[22],*r[23:27],status,
-            hex(r[5]),hex(r[6]),hex(r[4])]
+            hex(r[5]),hex(r[6]),hex(r[4]),*country_labels(r,tags)]
 
-def explanation(r):
+def country_labels(r,tags=None):
+    from country_report import direction_labels
+    return direction_labels(int(r[32]),int(r[33]),int(r[3]),tags)
+
+def explanation(r,tags=None):
     r=list(map(int,r)); src=r[8:13]; dst=r[13:18]
     soft=trunc(trunc(src[0]*10000)*(100000-dst[2]))
     hard=trunc(trunc(src[1]*10000)*dst[2])
     base=soft+hard
     defense=dst[3] if r[3] else dst[4]
     threshold=trunc(trunc(defense*10000)*r[19])
-    return (f'攻撃元 {hex(r[5])} → 攻撃先 {hex(r[6])}\n'
+    return (f'攻撃側 ⇔ 防御側：{country_labels(r,tags)[2]}\n攻撃元 {hex(r[5])} → 攻撃先 {hex(r[6])}\n'
       f'SA={fixed(src[0])}、HA={fixed(src[1])}、相手の装甲化率={fixed(dst[2])}。\n'
       f'基礎判定数 ≈ (SA × (1−装甲化率) + HA × 装甲化率) ÷ 10。'
       f'ゲームと同じ固定小数点の切り捨てを入れると {fixed(base)}。\n'
@@ -66,10 +70,10 @@ def save_details(folder,data):
     data=dict(data,format_version=1,completed=counts,limit_per_side=data.get('limit_per_side',500))
     atomic_text(folder/'details.json',json.dumps(data,ensure_ascii=False,indent=2)+'\n')
     stream=io.StringIO(newline='');writer=csv.writer(stream,lineterminator='\n');writer.writerow(HEADERS)
-    writer.writerows(row_values(r) for r in records)
+    writer.writerows(row_values(r,data.get('country_tags')) for r in records)
     atomic_text(folder/'details.csv','\ufeff'+stream.getvalue())
-    rows=''.join('<tr class="'+('a' if int(r[3]) else 'b')+'">'+''.join('<td>'+html.escape(str(v))+'</td>' for v in row_values(r))+'</tr>' for r in records)
-    notes=''.join('<details><summary>'+row_values(r)[0]+' の計算</summary><pre>'+html.escape(explanation(r))+'</pre></details>' for r in records)
+    rows=''.join('<tr class="'+('a' if int(r[3]) else 'b')+'">'+''.join('<td>'+html.escape(str(v))+'</td>' for v in row_values(r,data.get("country_tags")))+'</tr>' for r in records)
+    notes=''.join('<details><summary>'+row_values(r)[0]+' の計算</summary><pre>'+html.escape(explanation(r,data.get("country_tags")))+'</pre></details>' for r in records)
     grouped_html=render_groups_html(data)
     atomic_text(folder/'details.html','''<!doctype html><meta charset="utf-8"><title>個別攻撃の記録</title>
 <style>body{font:15px system-ui;margin:24px;background:#f3f6fa;color:#17263c}h1{font-size:24px}p{line-height:1.7}.sheet{overflow:auto;max-height:65vh;background:white;border:1px solid #b8c6d8}table{border-collapse:separate;border-spacing:0;white-space:nowrap;font-variant-numeric:tabular-nums}th,td{padding:9px 12px;border-right:1px solid #d6dfeb;border-bottom:1px solid #d6dfeb;text-align:right}th{position:sticky;top:0;background:#213e60;color:white;z-index:2}td:first-child{position:sticky;left:0;background:#e6edf6;font-weight:bold}.a{background:#edf6ff}.b{background:#fff6e8}pre{white-space:pre-wrap;line-height:1.7}details{background:white;padding:12px;margin:8px 0}</style>
@@ -101,11 +105,13 @@ def show_details(root,folder,subset=None):
     tree.grid(row=0,column=0,sticky='nsew');y.grid(row=0,column=1,sticky='ns');x.grid(row=1,column=0,sticky='ew')
     frame.rowconfigure(0,weight=1);frame.columnconfigure(0,weight=1)
     tree.tag_configure('a',background='#edf6ff');tree.tag_configure('b',background='#fff6e8')
-    for i,r in enumerate(records):tree.insert('','end',iid=str(i),values=row_values(r),tags=('a' if int(r[3]) else 'b',))
+    tree.configure(displaycolumns=[0,25,26,27,*range(1,25)])
+    tree.column(27,width=350)
+    for i,r in enumerate(records):tree.insert('','end',iid=str(i),values=row_values(r,data.get('country_tags')),tags=('a' if int(r[3]) else 'b',))
     text=tk.Text(w,height=13,wrap='word',font=('',10));text.pack(fill='x',padx=12,pady=12);text.configure(state='disabled')
     def select(event):
         if tree.selection():
-            text.configure(state='normal');text.delete('1.0','end');text.insert('end',explanation(records[int(tree.selection()[0])])) ;text.configure(state='disabled')
+            text.configure(state='normal');text.delete('1.0','end');text.insert('end',explanation(records[int(tree.selection()[0])],data.get('country_tags'))) ;text.configure(state='disabled')
     tree.bind('<<TreeviewSelect>>',select)
     ttk.Button(w,text='更新',command=lambda:(w.destroy(),show_details(root,folder,subset=subset))).pack(pady=6)
     return w

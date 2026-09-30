@@ -8,10 +8,13 @@ state.add(80).writeS32(CONFIG.defense_offset);
 state.add(84).writeS32(CONFIG.test ? 0 : CONFIG.side_offset);
 const kernel = Process.getModuleByName('kernel32.dll');
 const sampling = Memory.alloc(24);
+const countries=Memory.alloc(16+4096*88),countryBuffer=Memory.alloc(16+4096*88);
+let countryBase=null;
+const countryFixtureMemory=[];
 const testClock = Memory.alloc(8);
 const clockFixture = CONFIG.test ? new CModule('extern unsigned long long clock_value; unsigned long long now(void) { return clock_value; }',{clock_value:testClock}) : null;
 const cm = new CModule(COUNTER_SOURCE, {
-  state, trace, width_filter, sampling,
+  state, trace, width_filter, sampling,countries,
   acquire: kernel.getExportByName('AcquireSRWLockExclusive'),
   release: kernel.getExportByName('ReleaseSRWLockExclusive'),
   thread_id: kernel.getExportByName('GetCurrentThreadId'),
@@ -20,6 +23,17 @@ const cm = new CModule(COUNTER_SOURCE, {
 const buf = Memory.alloc(280);
 const takeSnapshot = new NativeFunction(cm.snapshot, 'void', ['pointer']);
 const takeTrace = new NativeFunction(cm.trace_snapshot, 'void', ['pointer']);
+const takeCountries=new NativeFunction(cm.country_snapshot,'void',['pointer']);
+function countryTag(id) {
+  if(!id||!countryBase||!CONFIG.country_layout)return null;
+  try {
+    const game=countryBase.add(CONFIG.country_layout.game_state).readPointer();
+    const text=game.add(0x358).readPointer().add(id*32),size=text.add(16).readU64().toNumber();
+    if(size!==3)return null;
+    const tag=(text.add(24).readU64().compare(15)>0?text.readPointer():text).readUtf8String(3);
+    return /^[A-Z0-9]{3}$/.test(tag)?tag:null;
+  } catch(e){return null;}
+}
 let listeners = [];
 let detailListeners = [];
 let fixture = null;
@@ -80,6 +94,14 @@ if (CONFIG.test) {
   runFixture = new NativeFunction(fixture.run,'void',['pointer','pointer','pointer','int']);
 } else {
   const module = Process.getModuleByName('hoi4.exe');
+  countryBase=module.base;
+  if(CONFIG.country_layout) {
+    for(const check of CONFIG.country_layout.checks) {
+      const actual=Array.from(new Uint8Array(module.base.add(check.rva).readByteArray(check.bytes.length/2))).map(b=>b.toString(16).padStart(2,'0')).join('');
+      if(actual!==check.bytes)throw new Error('国の取得処理が対応表と一致しません');
+    }
+    countries.writeS32(1);
+  }
   function verified(name) {
     const f = CONFIG.functions[name];
     const address = module.base.add(f.rva);
@@ -108,6 +130,38 @@ if (CONFIG.test) {
   }
 }
 rpc.exports = {
+  countries() {
+    takeCountries(countryBuffer);const pairs=[],tags={};
+    for(let i=0;i<countryBuffer.add(4).readS32();i++) {
+      const p=countryBuffer.add(16+i*88),source=p.readS32(),target=p.add(4).readS32();
+      tags[source]=countryTag(source);tags[target]=countryTag(target);
+      pairs.push({source,target,role:p.add(8).readS32(),counts:Array.from({length:4},(_,j)=>p.add(16+j*8).readU64().toString()),
+        filtered:Array.from({length:4},(_,j)=>p.add(48+j*8).readU64().toString()),calls:p.add(80).readU64().toString()});
+    }
+    return {enabled:countryBuffer.readS32()!==0,pairs,tags,overflow:countryBuffer.add(8).readU64().toString()};
+  },
+  countryfixture(rounds=1) {
+    if(!CONFIG.test)throw new Error('test only');
+    rounds=rounds||1;
+    this.exercisedetails(0);countries.writeS32(1);
+    const src=Memory.alloc(0x500),dst=Memory.alloc(0x500),stats=Memory.alloc(0x300),side=Memory.alloc(8);
+    src.add(0x138).writePointer(stats);dst.add(0x138).writePointer(stats);
+    src.add(0x1d8).writeS32(1);dst.add(0x1d8).writeS32(2);
+    const global=Memory.alloc(8),game=Memory.alloc(0x380),tags=Memory.alloc(160);
+    global.writePointer(game);game.add(0x358).writePointer(tags);
+    for(const [id,tag] of [[1,'GER'],[2,'SOV']]){const p=tags.add(id*32);p.writeUtf8String(tag);p.add(16).writeU64(3);p.add(24).writeU64(15);}
+    countryFixtureMemory.push(global,game,tags);countryBase=global;CONFIG.country_layout={game_state:0};
+    const call=new NativeFunction(fixture.detail_ground,'void',['pointer','pointer','pointer','pointer','int64']);
+    for(let i=0;i<rounds;i++) {
+      if(i%25===0)this.advancetime(1000);
+      side.writeU8(1);call(side,ptr(0),src,dst,50000);
+      side.writeU8(0);call(side,ptr(0),dst,src,50000);
+    }
+    const army=Memory.alloc(0x240);src.add(0x3b8).writePointer(army);army.add(0x18+0x1dc).writeS32(3);
+    side.writeU8(1);call(side,ptr(0),src,dst,50000);
+    army.add(0x18+0x1dc).writeS32(0);army.add(0x18+0x1d4).writeS32(4);call(side,ptr(0),src,dst,50000);
+    return {countries:this.countries(),details:this.details()};
+  },
   advancetime(ms) {
     if(!CONFIG.test || ms<0) throw new Error('test only, monotonic clock');
     testClock.writeU64(testClock.readU64().add(ms));
@@ -179,7 +233,8 @@ rpc.exports = {
       for(const listener of detailListeners) listener.detach();
       detailListeners=[]; Interceptor.flush();
     }
-    return {records,limit_per_side:250,sample_interval_ms:1000,sample_per_side:25,reserved:[traceBuffer.add(16).readU64().toString(),traceBuffer.add(24).readU64().toString()]};
+    const tags={};for(const r of records)for(const i of [32,33])if(Number(r[i])>0)tags[r[i]]=countryTag(Number(r[i]));
+    return {records,country_tags:tags,country_enabled:countries.readS32()!==0,limit_per_side:250,sample_interval_ms:1000,sample_per_side:25,reserved:[traceBuffer.add(16).readU64().toString(),traceBuffer.add(24).readU64().toString()]};
   },
   snapshot() {
     takeSnapshot(buf);

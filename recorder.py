@@ -181,6 +181,7 @@ class Recorder:
                         raise RuntimeError('集計カウンターの整合性エラー')
                     counts=new
                     meta['updated_at']=datetime.now(timezone.utc).isoformat()
+                    if profile.get('country_layout'):meta['countries']=script.exports_sync.countries()
                     writer.writerow([meta['updated_at'],round(time.monotonic()-started,3),*counts])
                     f.flush()
                     os.fsync(f.fileno())
@@ -193,7 +194,7 @@ class Recorder:
                             self.notify({'detail_progress':progress})
                             detail_size=current_size
                         details_complete=current_size==500
-                    self.notify({'counts':counts,'folder':str(self.folder)})
+                    self.notify({'counts':counts,'countries':meta.get('countries'),'folder':str(self.folder)})
                 checkpoint()
                 while not self.stop_event.wait(interval):
                     if detached.is_set():
@@ -277,6 +278,9 @@ def show_report_window(root,folder):
     for i,(label,value) in enumerate(rows):
         table.insert('', 'end',text=label,values=(value,filtered_rows[i][1]) if filtered_rows else (value,))
     table.pack(fill='x',pady=8)
+    table.configure(height=8)
+    from country_report import CountryTable
+    country_table=CountryTable(frame,height=4);country_table.update(data.get('countries'))
     ttk.Label(frame,text='接続中の全体集計です。防御が適用された回数と、不命中の回数は別です。\n収集中は「更新」で最新の保存内容を読み直せます。',wraplength=630).pack(anchor='w',pady=10)
     path_var=tk.StringVar(value=str(folder))
     ttk.Entry(frame,textvariable=path_var,state='readonly').pack(fill='x',pady=8)
@@ -297,18 +301,20 @@ def show_report_window(root,folder):
         ttk.Button(frame,text='攻撃先ごとのまとめ',command=lambda:show_groups(root,folder)).pack(anchor='w',padx=4)
     return window
 
+def configure_tk():
+    import sys
+    tcl_root=Path(sys.prefix)/'tcl'
+    if (tcl_root/'tcl8.6/init.tcl').exists() and (tcl_root/'tk8.6/tk.tcl').exists():
+        os.environ['TCL_LIBRARY']=os.path.relpath(tcl_root/'tcl8.6')
+        os.environ['TK_LIBRARY']=os.path.relpath(tcl_root/'tk8.6')
+
 def gui(smoke_test=False):
-    # Tcl path normalization in this bundled runtime drops some Windows path components.
-    # Use the local, unmodified Tcl/Tk scripts via relative paths.
-    if (BASE/'.venv/tcl/tcl8.6/init.tcl').exists():
-        os.chdir(BASE)
-        os.environ['TCL_LIBRARY']='.venv/tcl/tcl8.6'
-        os.environ['TK_LIBRARY']='.venv/tcl/tk8.6'
+    configure_tk()
     import tkinter as tk
     from tkinter import ttk, messagebox
     root=tk.Tk()
     root.title('HOI4 戦闘の自動収集')
-    root.geometry('860x790')
+    root.geometry('960x900')
     frame=ttk.Frame(root,padding=24); frame.pack(fill='both',expand=True)
     ttk.Label(frame,text='HOI4 戦闘の自動収集',font=('',20,'bold')).pack(anchor='w')
     ttk.Label(frame,text='HOI4を起動 → 収集開始 → 試合 → 停止して結果を見る',padding=(0,12)).pack(anchor='w')
@@ -324,11 +330,14 @@ def gui(smoke_test=False):
     width_range_check=ttk.Checkbutton(frame,text='両陣営に30.00～50.00幅の師団がいる戦闘も別集計',variable=width_range_enabled)
     width_range_check.pack(anchor='w')
     ttk.Label(frame,textvariable=detail_status).pack(anchor='w',pady=4)
-    ttk.Label(frame,text='地上攻撃を全体集計。国別・師団別の分類は未実装です。\nゲームの能力値・乱数・命中結果は変更しません。\nまずシングルで確認してください。マルチの負荷・同期は未検証です。',wraplength=640).pack(anchor='w',pady=8)
+    from country_report import CountryTable
+    country_table=CountryTable(frame,height=4)
+    ttk.Label(frame,text='国と攻撃側・防御側は自動で記録します。旧記録の国情報は復元できません。',wraplength=640).pack(anchor='w',pady=8)
     events=queue.Queue(); active=[None]; last_folder=[latest_report()]; closing=[False]
     buttons=ttk.Frame(frame); buttons.pack(anchor='w',pady=16)
     def start():
         active[0]=Recorder(events.put)
+        country_table.update(None)
         start_button.config(state='disabled'); stop_button.config(state='normal')
         detail_check.config(state='disabled')
         width_range_check.config(state='disabled')
@@ -349,6 +358,7 @@ def gui(smoke_test=False):
             event=events.get()
             if event.get('folder'): last_folder[0]=event['folder']
             if 'status' in event: status.set(event['status'])
+            if event.get('countries'):country_table.update(event['countries'])
             if 'detail_progress' in event:
                 p=event['detail_progress']
                 detail_status.set(f"個別記録：a {p['a']} / 250件・b {p['b']} / 250件"+('（完了）' if p['a']==p['b']==250 else ''))

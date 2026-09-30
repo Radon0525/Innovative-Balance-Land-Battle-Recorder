@@ -49,8 +49,8 @@ class GroupTests(unittest.TestCase):
         import os
         from recorder import BASE
         os.chdir(BASE)
-        os.environ['TCL_LIBRARY']='.venv/tcl/tcl8.6'
-        os.environ['TK_LIBRARY']='.venv/tcl/tk8.6'
+        from recorder import configure_tk
+        configure_tk()
         import tkinter as tk
         from tkinter import ttk
         from detail_report import save_details

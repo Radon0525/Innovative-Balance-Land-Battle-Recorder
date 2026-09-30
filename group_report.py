@@ -19,8 +19,11 @@ def groups(data):
     names={}
     result={}
     for r in records:
-        for address in (r[5],r[6]):
-            if address not in names:names[address]=f'師団{len(names)+1}'
+        for address,country in ((r[5],r[32]),(r[6],r[33])):
+            if address not in names:
+                from country_names import country_name
+                prefix=country_name(country,data.get('country_tags',{}).get(str(country)))+' · ' if country else ''
+                names[address]=prefix+f'師団{len(names)+1}'
         key=(r[3],r[4],r[6])
         if key not in result:result[key]={'key':key,'records':[],'sources':{}}
         g=result[key];g['records'].append(r)

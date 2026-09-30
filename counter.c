@@ -5,7 +5,22 @@
 extern void acquire(void *lock);
 extern void release(void *lock);
 extern unsigned long thread_id(void);
-typedef struct { unsigned long id; int depth; int role; int64_t *record; int allocation_depth; int allowed; int selected; } Thread;
+typedef struct { unsigned long id; int depth; int role; int64_t *record; int allocation_depth; int allowed; int selected; int country_index; } Thread;
+typedef struct { int source,target,role,pad; uint64_t counts[4],filtered[4],calls; } CountryPair;
+typedef struct { int enabled,count; uint64_t overflow; CountryPair pairs[4096]; } Countries;
+extern Countries countries;
+static int unit_country(char *unit) {
+  char *army=*(char **)(unit+0x3b8);int id;
+  if(!army)id=*(int *)(unit+0x1d8);
+  else { army+=0x18;id=*(int *)(army+0x1dc);if(id<1)id=*(int *)(army+0x1d4); }
+  return id>0 && id<=100000 ? id : 0;
+}
+static int country_pair(int source,int target,int role) {
+  int i;
+  for(i=0;i<countries.count;i++)if(countries.pairs[i].source==source && countries.pairs[i].target==target && countries.pairs[i].role==role)return i;
+  if(countries.count>=4096){countries.overflow++;return -1;}
+  i=countries.count++;countries.pairs[i].source=source;countries.pairs[i].target=target;countries.pairs[i].role=role;return i;
+}
 typedef int64_t *(*WidthGetter)(void *,int64_t *,void *);
 typedef struct { int enabled,list_offset,count_offset,pad; WidthGetter width; } Filter;
 extern Filter width_filter;
@@ -25,7 +40,7 @@ static int sample_slot(unsigned int side) {
   sampling.used[side]++;
   return 1;
 }
-typedef struct { int role; int64_t *record; int64_t *current; int selected; } Ground;
+typedef struct { int role; int64_t *record; int64_t *current; int selected; int country_index; } Ground;
 typedef struct {
   void *lock;
   uint64_t counts[8];
@@ -38,7 +53,7 @@ typedef struct {
   uint64_t filtered[17];
 } State;
 extern State state;
-typedef struct { int *used; int before; int group; int role; int64_t *record; int selected; } Hit;
+typedef struct { int *used; int before; int group; int role; int64_t *record; int selected; int country_index; } Hit;
 
 static void stats(int64_t *out, void *unit) {
   char *s=*(char **)((char *)unit+0x138);
@@ -119,6 +134,11 @@ void ground_enter(GumInvocationContext *ctx) {
     t->depth++;
     /* Same context passed to dice: flag 0 selects breakthrough (+0xb0), 1 defense (+0xa8). */
     t->role=flag<=1 ? flag : -1;
+    previous->country_index=t->country_index;t->country_index=-1;
+    if(countries.enabled && flag<=1) {
+      t->country_index=country_pair(unit_country(gum_invocation_context_get_nth_argument(ctx,2)),unit_country(gum_invocation_context_get_nth_argument(ctx,3)),flag);
+      if(t->country_index>=0)countries.pairs[t->country_index].calls++;
+    }
     if(flag>1) state.errors++;
     state.active++;
     if(trace.enabled && flag<=1) {
@@ -133,6 +153,7 @@ void ground_enter(GumInvocationContext *ctx) {
         r[7]=(intptr_t)gum_invocation_context_get_nth_argument(ctx,4);
         stats(r+8,(void *)(intptr_t)r[5]); stats(r+13,(void *)(intptr_t)r[6]);
         r[21]=*(int *)((char *)(intptr_t)r[6]+state.offset);
+        if(t->country_index>=0){r[32]=countries.pairs[t->country_index].source;r[33]=countries.pairs[t->country_index].target;}
         t->record=r; previous->current=r;
         if(trace.reserved[0]==250 && trace.reserved[1]==250) trace.enabled=0;
       }
@@ -150,7 +171,7 @@ void ground_leave(GumInvocationContext *ctx) {
       int64_t *r=previous->current;
       r[22]=*(int *)((char *)(intptr_t)r[6]+state.offset); r[0]=1;
     }
-    t->depth--; t->role=previous->role; t->record=previous->record; t->selected=previous->selected; state.active--;
+    t->depth--; t->role=previous->role; t->record=previous->record; t->selected=previous->selected;t->country_index=previous->country_index; state.active--;
   }
   else state.errors++;
   release(&state.lock);
@@ -167,6 +188,7 @@ void hit_enter(GumInvocationContext *ctx) {
   h->selected=t && t->depth>0 && t->selected;
   h->role=t ? t->role : -1;
   h->record=t ? t->record : 0;
+  h->country_index=t && t->depth>0 ? t->country_index : -1;
   if(h->record) {
     int64_t threshold=(intptr_t)gum_invocation_context_get_nth_argument(ctx,1);
     if(h->record[31] && threshold!=h->record[20]) h->record[27]++;
@@ -189,6 +211,11 @@ void hit_leave(GumInvocationContext *ctx) {
       if(h->role>=0) state.filtered[9+h->role*4+index]++;
     }
     if(h->record) h->record[23+(delta==1 ? 0 : 2)+hit]++;
+    if(countries.enabled && h->group==0 && h->country_index>=0) {
+      int index=(delta==1 ? 0 : 2)+hit;
+      countries.pairs[h->country_index].counts[index]++;
+      if(width_filter.enabled && h->selected)countries.pairs[h->country_index].filtered[index]++;
+    }
   } else if(h->group!=-2) { state.errors++; if(h->record) h->record[27]++; }
   state.active--;
   release(&state.lock);
@@ -228,5 +255,16 @@ void snapshot(uint64_t *out) {
   out[17]=state.active;
   for(i=0;i<17;i++) out[18+i]=state.filtered[i];
   out[26]=state.errors;
+  release(&state.lock);
+}
+
+void country_snapshot(Countries *out) {
+  int i,j;acquire(&state.lock);
+  out->enabled=countries.enabled;out->count=countries.count;out->overflow=countries.overflow;
+  for(i=0;i<countries.count;i++) {
+    out->pairs[i].source=countries.pairs[i].source;out->pairs[i].target=countries.pairs[i].target;out->pairs[i].role=countries.pairs[i].role;
+    out->pairs[i].calls=countries.pairs[i].calls;
+    for(j=0;j<4;j++){out->pairs[i].counts[j]=countries.pairs[i].counts[j];out->pairs[i].filtered[j]=countries.pairs[i].filtered[j];}
+  }
   release(&state.lock);
 }

@@ -39,8 +39,8 @@ class DetailTests(unittest.TestCase):
         from recorder import BASE
         from detail_report import show_details
         os.chdir(BASE)
-        os.environ['TCL_LIBRARY']='.venv/tcl/tcl8.6'
-        os.environ['TK_LIBRARY']='.venv/tcl/tk8.6'
+        from recorder import configure_tk
+        configure_tk()
         import tkinter as tk
         root=tk.Tk();root.withdraw()
         try:
